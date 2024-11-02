@@ -15,6 +15,7 @@ def initialize_database():
             ID TEXT NOT NULL,
             Batch_No TEXT NOT NULL,
             Medicine_Name TEXT NOT NULL,
+            Generic_Name TEXT NOT NULL,
             Pharmaceutical_Name TEXT,
             Expiry_Date TEXT NOT NULL, -- Store dates as TEXT in YYYY-MM-DD format
             Quantity INTEGER NOT NULL,
@@ -25,18 +26,18 @@ def initialize_database():
     conn.close()
 
 # Add a new record to the medicine_information table
-def add_medicine(id_no, batch_no, medicine_name, pharmaceutical_name, expiry_date, quantity):
+def add_medicine(id_no, batch_no, medicine_name, Generic_Name, pharmaceutical_name, expiry_date, quantity):
     conn = create_connection()
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT INTO medicine_information (ID, Batch_No, Medicine_Name, Pharmaceutical_Name, Expiry_Date, Quantity)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (id_no, batch_no, medicine_name, pharmaceutical_name, expiry_date, quantity))
+        INSERT INTO medicine_information (ID, Batch_No, Medicine_Name, Generic_Name, Pharmaceutical_Name, Expiry_Date, Quantity)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (id_no, batch_no, medicine_name, Generic_Name, pharmaceutical_name, expiry_date, quantity))
     conn.commit()
     conn.close()
 
 # Edit an existing record in the medicine_information table by ID
-def edit_medicine(id, batch_no, medicine_name=None, pharmaceutical_name=None, expiry_date=None, quantity=None):
+def edit_medicine(id, batch_no, medicine_name=None, Generic_Name=None, pharmaceutical_name=None, expiry_date=None, quantity=None):
     """Edit a medicine record by ID and Batch_No."""
     conn = create_connection()
     cursor = conn.cursor()
@@ -48,6 +49,9 @@ def edit_medicine(id, batch_no, medicine_name=None, pharmaceutical_name=None, ex
     if medicine_name is not None:
         updates.append("Medicine_Name = ?")
         parameters.append(medicine_name)
+    if Generic_Name is not None:
+        updates.append("Generic_Name = ?")
+        parameters.append(Generic_Name)
     if pharmaceutical_name is not None:
         updates.append("Pharmaceutical_Name = ?")
         parameters.append(pharmaceutical_name)
@@ -57,7 +61,7 @@ def edit_medicine(id, batch_no, medicine_name=None, pharmaceutical_name=None, ex
     if quantity is not None:
         updates.append("Quantity = ?")
         parameters.append(quantity)
-        
+    
     # Append ID and Batch_No as the final parameters
     parameters.extend([id, batch_no])
     sql = f"UPDATE medicine_information SET {', '.join(updates)} WHERE ID = ? AND Batch_No = ?"

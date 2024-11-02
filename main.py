@@ -1,6 +1,8 @@
 import tkinter as tk
+from tkinter import ttk
 from tkinter import messagebox
 from tkcalendar import DateEntry
+from datetime import datetime, timedelta
 import dbhandler  # Assuming dbhandler.py contains the database functions provided earlier
 
 # Initialize the root window
@@ -18,11 +20,6 @@ top_nav.pack(side="top", fill="x")
 app_title = tk.Label(top_nav, text="Medicine Inventory", font=("Arial", 18), fg="black", pady=15)
 app_title.pack(side="left", padx=20)
 
-search = tk.Entry(top_nav, font=('calibre', 10, 'normal'))
-search.pack(side="right", padx=20)
-
-search_lbl = tk.Label(top_nav, text="Search", font=("Arial", 18), fg="black", pady=15)
-search_lbl.pack(side="right", padx=5)
 
 # Create a main content area below the top navigation bar
 main_content = tk.Frame(root, bg="gray")
@@ -46,43 +43,151 @@ frames = {
 for frame in frames.values():
     frame.place(relwidth=1, relheight=1)
 
-# Populate Inventory List
+class ScrollableFrame(ttk.Frame):
+    def __init__(self, container, *args, **kwargs):
+        super().__init__(container, *args, **kwargs)
+        self.canvas = tk.Canvas(self, width=container.winfo_width())  # Set initial width of canvas
+        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.scrollable_frame = ttk.Frame(self.canvas)
+
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        )
+
+        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        # Expand canvas and scrollbar within the frame
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.scrollbar.pack(side="right", fill="y")
+
+        # Bind mouse wheel scrolling to canvas
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+
+    def _on_mousewheel(self, event):
+        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+
+# Variable to set the warning threshold in days
+days_warning = 30  # Rows will turn orange if expiry date is within this many days
+
+# Variable to hold the sorting option
+sort_option = tk.StringVar()
+sort_option.set("Nearest Expiry")  # Default sorting by nearest expiry
+
+def update_days_warning():
+    """Update the days_warning variable based on user input."""
+    global days_warning
+    try:
+        days_warning = int(days_warning_entry.get())
+        show_inventory()  # Refresh the inventory display with the new days_warning
+    except ValueError:
+        # If the input is invalid, reset it to the previous valid value or default
+        days_warning_entry.delete(0, tk.END)
+        days_warning_entry.insert(0, str(days_warning))
+
+search_query = tk.StringVar()
+
 def show_inventory():
     # Clear previous widgets in the view_inventory frame
     for widget in frames["view_inventory"].winfo_children():
         widget.destroy()
-    
-    # Create a container frame with a solid border
-    container_frame = tk.Frame(frames["view_inventory"], bd=5, bg="white", relief="solid")
-    container_frame.grid(row=0, column=0, padx=20, pady=20, sticky="nsew")
-    
-    # Fetch all medicines data from the database
-    medicines = dbhandler.get_all_medicines()
-    headers = ["ID", "Batch No", "Medicine Name", "Pharmaceutical Name", "Expiry Date", "Quantity"]
-    
-    # Configure weights for centered alignment and even column distribution
-    for i in range(len(headers)):
-        container_frame.grid_columnconfigure(i, weight=1)
-    
-    # Create header row with larger font and centered alignment
+
+    # Container for days warning, sorting options, and search
+    options_frame = tk.Frame(frames["view_inventory"])
+    options_frame.pack(pady=10)
+
+    # Days before expiring input
+    days_warning_label = tk.Label(options_frame, text="Days before expiring:", font=("Arial", 12))
+    days_warning_label.grid(row=0, column=0, padx=5)
+
+    global days_warning_entry
+    days_warning_entry = tk.Entry(options_frame, font=("Arial", 12), width=5)
+    days_warning_entry.insert(0, str(days_warning))  # Default value is 30
+    days_warning_entry.grid(row=0, column=1, padx=5)
+
+    # Update button
+    update_button = tk.Button(options_frame, text="Update", command=update_days_warning)
+    update_button.grid(row=0, column=2, padx=5)
+
+    # Dropdown for sorting options
+    sorting_options = ["ID", "Quantity", "Farthest Expiry", "Nearest Expiry"]
+    sort_menu = tk.OptionMenu(options_frame, sort_option, *sorting_options, command=lambda _: show_inventory())
+    sort_menu.grid(row=0, column=3, padx=5)
+
+    # Search input
+    search_label = tk.Label(options_frame, text="Search:", font=("Arial", 12))
+    search_label.grid(row=0, column=4, padx=5)
+
+    search_entry = tk.Entry(options_frame, textvariable=search_query, font=("Arial", 12), width=20)
+    search_entry.grid(row=0, column=5, padx=5)
+    search_entry.bind("<KeyRelease>", lambda event: show_inventory())  # Trigger search on key release
+
+    # ScrollableFrame for the table
+    scrollable_frame = ScrollableFrame(frames["view_inventory"])
+    scrollable_frame.pack(expand=True, fill="both", padx=20, pady=20)
+
+    # Container for the table content
+    container_frame = tk.Frame(scrollable_frame.scrollable_frame, relief="solid", bd=1)
+    container_frame.pack(fill="both", expand=True)
+
+    # Table headers
+    headers = ["ID", "Batch No", "Medicine Name", "Generic_Name", "Pharmaceutical Name", "Expiry Date", "Quantity"]
+
+    # Configure column width to fit the frame
+    for col in range(len(headers)):
+        container_frame.grid_columnconfigure(col, weight=1)  # Use weight to let all columns expand equally
+
+    # Header row
     for col, header in enumerate(headers):
         tk.Label(container_frame, text=header, font=("Arial", 14, "bold"), borderwidth=2, 
                  relief="solid", padx=10, pady=10, anchor="center").grid(row=0, column=col, sticky="nsew")
-    
-    # Populate table rows with medicine data and format cells
+
+    # Get data and sort by the selected option
+    medicines = dbhandler.get_all_medicines()
+
+    # Apply search filter
+    query = search_query.get().strip().lower()
+    if query:
+        medicines = [medicine for medicine in medicines if query in medicine[2].lower()]  # Filter by medicine name
+
+    # Sort by the selected option
+    if sort_option.get() == "ID":
+        medicines.sort(key=lambda x: int(x[0]))  # Sort by ID
+    elif sort_option.get() == "Quantity":
+        medicines.sort(key=lambda x: (int(x[5]) if x[6] else -1), reverse=True)  # Treat empty as -1, sort descending
+    elif sort_option.get() == "Farthest Expiry":
+        medicines.sort(key=lambda x: datetime.strptime(x[5], "%Y-%m-%d"), reverse=True)
+    elif sort_option.get() == "Nearest Expiry":
+        medicines.sort(key=lambda x: datetime.strptime(x[5], "%Y-%m-%d"))
+
+    # Populate data rows
+    current_date = datetime.now().date()
     for row, medicine in enumerate(medicines, start=1):
+        expiry_date = datetime.strptime(medicine[5], "%Y-%m-%d").date()
+        days_until_expiry = (expiry_date - current_date).days
+
+        # Determine row color
+        if days_until_expiry <= 0:
+            row_color = "#ff9999"
+        elif 0 < days_until_expiry <= days_warning:
+            row_color = "#ffd078"
+        else:
+            row_color = "#9dff94"
+
         for col, value in enumerate(medicine):
             tk.Label(container_frame, text=value, font=("Arial", 12), borderwidth=1, 
-                     relief="solid", padx=10, pady=5, anchor="center").grid(row=row, column=col, sticky="nsew")
-    
-    # Add padding around the entire frame for spacing
-    container_frame.grid(padx=20, pady=20)
+                     relief="solid", padx=10, pady=5, anchor="center", bg=row_color).grid(row=row, column=col, sticky="nsew")
 
-    # Configure the parent frame to allow the inventory frame to expand and fill the available space
+    # Frame stretching
     frames["view_inventory"].grid_rowconfigure(0, weight=1)
     frames["view_inventory"].grid_columnconfigure(0, weight=1)
+    scrollable_frame.grid_rowconfigure(0, weight=1)
+    scrollable_frame.grid_columnconfigure(0, weight=1)
 
-
+    # Make sure the container frame fills the available space
+    container_frame.grid_rowconfigure(0, weight=1)  # Ensure the header row expands
 
 # Add Medicine Form
 def add_medicine_form():
@@ -91,16 +196,16 @@ def add_medicine_form():
         widget.destroy()
     
     # Create a container frame with a black border
-    container_frame = tk.Frame(frames["add_medicine"], bd=5, bg="white", relief="solid")
+    container_frame = tk.Frame(frames["add_medicine"], bd=5, relief="solid")
     container_frame.grid(row=0, column=0, padx=20, pady=20, sticky="nsew")
 
     # Define labels including the new 'ID' field
-    labels = ["ID (Barcode)", "Batch No", "Medicine Name", "Pharmaceutical Name", "Expiry Date", "Quantity"]
+    labels = ["ID (Barcode)", "Batch No", "Medicine Name", "Generic_Name", "Pharmaceutical Name", "Expiry Date", "Quantity"]
     entries = []
     
     # Create a label and entry for each field
     for i, label in enumerate(labels):
-        tk.Label(container_frame, text=label, font=("Arial", 14), bg="white").grid(row=i, column=0, padx=10, pady=10, sticky="w")
+        tk.Label(container_frame, text=label, font=("Arial", 14)).grid(row=i, column=0, padx=10, pady=10, sticky="w")
         
         if label == "Expiry Date":
             # Use DateEntry widget for expiry date input
@@ -163,11 +268,22 @@ def edit_product_form():
     batch_entry.grid(row=1, column=1, padx=10, pady=10, sticky="w")
     
     # Labels and entries for medicine details
-    labels = ["Medicine Name", "Pharmaceutical Name", "Expiry Date", "Quantity"]
+    labels = ["Medicine Name", "Generic_Name", "Pharmaceutical Name", "Expiry Date", "Quantity"]
     entries = [tk.Entry(container_frame, font=("Arial", 14), width=25, borderwidth=2, relief="solid") for _ in labels]
     
     # Display labels and entries for medicine details
     for i, label in enumerate(labels, start=2):
+
+        if label == "Expiry Date":
+            # Use DateEntry widget for expiry date input
+            entry = DateEntry(container_frame, font=("Arial", 14), date_pattern="yyyy-mm-dd", width=25, borderwidth=2, relief="solid")
+        else:
+            # Use regular Entry widget for other inputs
+            entry = tk.Entry(container_frame, font=("Arial", 14), width=25, borderwidth=2, relief="solid")
+        
+        entry.grid(row=i, column=1, padx=10, pady=10, sticky="w")
+        entries.append(entry)
+
         tk.Label(container_frame, text=label, font=("Arial", 14), bg="white").grid(row=i, column=0, padx=10, pady=10, sticky="w")
         entries[i-2].grid(row=i, column=1, padx=10, pady=10, sticky="w")
     
@@ -258,6 +374,25 @@ for btn in buttons:
 
 # Show default frame initially
 show_frame("view_inventory", buttons[0])
+
+# Function to toggle between maximize and normal window state
+def toggle_maximize():
+    if root.state() == "normal":
+        root.state("zoomed")  # Maximize
+    else:
+        root.state("normal")  # Restore to normal size
+
+# Close button
+close_button = tk.Button(top_nav, text="X", font=("Arial", 14), command=root.destroy, fg="red")
+close_button.pack(side="right", padx=10)
+
+# Maximize/Restore button
+maximize_button = tk.Button(top_nav, text="🗖", font=("Arial", 14), command=toggle_maximize)
+maximize_button.pack(side="right", padx=10)
+
+# Minimize button
+minimize_button = tk.Button(top_nav, text="_", font=("Arial", 14), command=root.iconify)
+minimize_button.pack(side="right", padx=10)
 
 # Run the application
 root.mainloop()
